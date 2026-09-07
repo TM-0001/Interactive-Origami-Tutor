@@ -1,9 +1,9 @@
 import time
-from check_origami import check_origami, close_cv
+from check_origami import check_origami
 
 
 # =========================================================
-# 折り紙チューター：ハート
+# 折り紙チューター：ハートの折り方
 # 手順管理プログラム
 # =========================================================
 
@@ -61,6 +61,16 @@ class OrigamiTutor:
 
         return self.steps[self.current_step]
 
+    # --------------------------------------------- 
+    # CVに渡す現在のステップ番号を取得 
+    # --------------------------------------------- 
+    def get_current_step_number(self):
+
+        if self.finished: 
+            return None 
+
+        return self.steps[self.current_step]["step"]
+
     # ---------------------------------------------
     # 現在の指示を表示
     # ---------------------------------------------
@@ -108,7 +118,7 @@ class OrigamiTutor:
             self.finished = True
 
             print("\n======================================")
-            print("     Your origami heart is complete！")
+            print("     Your origami heart is complete!")
             print("======================================")
 
         else:
@@ -122,9 +132,13 @@ class OrigamiTutor:
 
         return self.finished
 
-def wait_for_cv_result():
-    # CV担当のプログラムからTrue / Falseを受け取る
-    return check_origami()
+
+
+def wait_for_cv_result(step):
+
+    # 現在のステップ番号を私、True / Falseの判定結果を受け取る
+    
+    return check_origami(step)
 
 # ---------------------------------------------------------
 # ③ メイン処理
@@ -144,11 +158,14 @@ def main():
         # 現在の指示を表示
         tutor.show_instruction()
 
+        # 現在のステップ番号を取得
+        current_step = tutor.get_current_step_number()
+
         # -------------------------------------------------
         # ここでCV担当から判定を受け取る
         # -------------------------------------------------
 
-        cv_result = wait_for_cv_result()
+        cv_result = wait_for_cv_result(current_step)
 
         # CV結果を手順管理に渡す
         tutor.receive_cv_result(cv_result)
