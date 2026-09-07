@@ -124,7 +124,7 @@ class OrigamiTutor:
 
 def wait_for_cv_result():
     # CV担当のプログラムからTrue / Falseを受け取る
-    return check_origami()
+    return check_origami(self.current_step)
 
 # ---------------------------------------------------------
 # ③ メイン処理
