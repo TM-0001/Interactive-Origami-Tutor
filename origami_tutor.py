@@ -122,7 +122,7 @@ class OrigamiTutor:
 
         return self.finished
 
-def wait_for_cv_result():
+def wait_for_cv_result(self.current_step):
     # CV担当のプログラムからTrue / Falseを受け取る
     return check_origami(self.current_step)
 
