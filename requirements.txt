@@ -1,6 +1,6 @@
 streamlit
 opencv-python-headless==4.11.0.86
-mediapipe==0.10.14
+mediapipe==0.10.21#0.10.14
 protobuf<5.0.0
 numpy<2.0.0
 av
