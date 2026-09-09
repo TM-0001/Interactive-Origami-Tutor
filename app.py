@@ -1,41 +1,135 @@
+
 import streamlit as st
 import cv2
 import numpy as np
+from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, WebRtcMode
+import av
+import mediapipe as mp
 
-# 1. 既存ファイルをそのままインポート
-from tu import STEPS
+from tu import STEPS, OrigamiTutor
 import demo
 
-# Streamlit の基本ページ設定
 st.set_page_config(page_title="折り紙チューター：ハート", layout="wide")
+
+# ---------------------------------------------------------
+# MediaPipe Hands の初期化（描画用）
+# ---------------------------------------------------------
+mp_hands = mp.solutions.hands
+mp_draw = mp.solutions.drawing_utils
 
 # ---------------------------------------------------------
 # セッション状態の初期化
 # ---------------------------------------------------------
-if "step_index" not in st.session_state:
-    st.session_state.step_index = 0  # 0からスタート
-if "is_finished" not in st.session_state:
-    st.session_state.is_finished = False
+if "tutor" not in st.session_state:
+    st.session_state.tutor = OrigamiTutor(STEPS)
 
-# ---------------------------------------------------------
-# サイドバー／ヘッダー表示
-# ---------------------------------------------------------
+tutor = st.session_state.tutor
+
 st.title("折り紙チューター：ハートの折り方")
 
-# 全ステップ数
-total_steps = len(STEPS)
+# ---------------------------------------------------------
+# 映像処理クラス (demo.py を変更せずに可視化描画を追加)
+# ---------------------------------------------------------
+class OrigamiProcessor(VideoProcessorBase):
+    def __init__(self):
+        self.step_num = 1
+        self.is_ok = False
+        
+        # 描画用のMediaPipe Handsインスタンス
+        self.hands = mp_hands.Hands(
+            static_image_mode=False,
+            max_num_hands=2,
+            min_detection_confidence=0.5,
+            min_tracking_confidence=0.5
+        )
 
-if st.session_state.is_finished:
+    def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
+        img = frame.to_ndarray(format="bgr24")
+
+        # -------------------------------------------------
+        # 1. demo.py による判定（元の処理をそのまま呼び出し）
+        # -------------------------------------------------
+        try:
+            self.is_ok = demo.check_origami(img, self.step_num)
+        except Exception:
+            self.is_ok = False
+
+        # -------------------------------------------------
+        # 2. 画面への可視化オーバーレイ描画処理 (app.py 側で実行)
+        # -------------------------------------------------
+        display = img.copy()
+        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+
+        # --- 【青色領域の検出・描画】 ---
+        lower_blue = np.array([90, 50, 50])
+        upper_blue = np.array([150, 255, 255])
+        blue_mask = cv2.inRange(hsv, lower_blue, upper_blue)
+        
+        kernel_size = (5, 5) if self.step_num in [1, 2] else (3, 3)
+        kernel = np.ones(kernel_size, np.uint8)
+        blue_mask = cv2.morphologyEx(blue_mask, cv2.MORPH_OPEN, kernel)
+        blue_mask = cv2.morphologyEx(blue_mask, cv2.MORPH_CLOSE, kernel)
+
+        blue_contours, _ = cv2.findContours(blue_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+        if blue_contours:
+            largest_blue = max(blue_contours, key=cv2.contourArea)
+            if cv2.contourArea(largest_blue) > 1000:
+                # 青色領域の輪郭を青い線で描画
+                cv2.drawContours(display, [largest_blue], -1, (255, 0, 0), 2)
+
+        # --- 【外形ポリゴンの検出・描画】 ---
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        edges = cv2.Canny(gray, 50, 150)
+        edges = cv2.dilate(edges, np.ones((5, 5), np.uint8))
+        outer_contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        for contour in outer_contours:
+            if cv2.contourArea(contour) < 10000:
+                continue
+            
+            perimeter = cv2.arcLength(contour, True)
+            approx = cv2.approxPolyDP(contour, 0.02 * perimeter, True)
+            
+            # 認識した輪郭を緑線で描画、頂点数をテキスト表示
+            cv2.drawContours(display, [approx], -1, (0, 255, 0), 2)
+            for pt in approx:
+                cv2.circle(display, tuple(pt[0]), 4, (0, 255, 255), -1)
+            
+            # 輪郭の近傍に頂点数を表示
+            x, y, w, h = cv2.boundingRect(approx)
+            cv2.putText(display, f"Vertices: {len(approx)}", (x, y - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+
+        # --- 【手の検出・描画】 ---
+        rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        rgb.flags.writeable = False
+        results = self.hands.process(rgb)
+        
+        if results.multi_hand_landmarks:
+            for hand_landmarks in results.multi_hand_landmarks:
+                # 検出された手に赤点と骨格線を描画
+                mp_draw.draw_landmarks(display, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+
+        # --- 【判定ステータスの描画】 ---
+        color = (0, 255, 0) if self.is_ok else (0, 0, 255)
+        text = f"Step {self.step_num}: {'OK' if self.is_ok else 'NG'}"
+        cv2.putText(display, text, (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.2, color, 3)
+
+        return av.VideoFrame.from_ndarray(display, format="bgr24")
+
+# 完了時の表示
+if tutor.is_finished():
     st.balloons()
     st.success("🎉 おめでとうございます！ハートの折り紙が完成しました！")
     if st.button("最初からやり直す"):
-        st.session_state.step_index = 0
-        st.session_state.is_finished = False
+        st.session_state.tutor = OrigamiTutor(STEPS)
         st.rerun()
+
 else:
-    current_step_data = STEPS[st.session_state.step_index]
-    step_num = current_step_data["step"]
+    current_step_data = tutor.get_current_step()
+    step_num = tutor.get_current_step_number()
     instruction = current_step_data["instruction"]
+    total_steps = len(STEPS)
 
     st.subheader(f"Step {step_num} / {total_steps}")
     st.info(f"**指示:** {instruction}")
@@ -43,58 +137,40 @@ else:
     col1, col2 = st.columns([1, 1])
 
     # ---------------------------------------------------------
-    # 左カラム: カメラ入力と判定処理
+    # 左カラム: カメラ入力
     # ---------------------------------------------------------
     with col1:
-        st.write("### リアルタイム判定")
-        img_file = st.camera_input("現在の折った状態を撮影してください")
+        ctx = webrtc_streamer(
+            key="origami-cam",
+            mode=WebRtcMode.SENDRECV,
+            video_processor_factory=OrigamiProcessor,
+            media_stream_constraints={
+                "video": {
+                    "width": {"ideal": 1280},
+                    "height": {"ideal": 720},
+                    "aspectRatio": {"ideal": 16 / 9},
+                },
+                "audio": False,
+            },
+            async_processing=True,
+        )
 
-        if img_file is not None:
-            # OpenCV 形式 (BGR) に変換
-            file_bytes = np.asarray(bytearray(img_file.read()), dtype=np.uint8)
-            frame = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-
-            # -------------------------------------------------
-            # demo.py の判定処理を呼び出し
-            # ※ demo.py 内の関数名・仕様に合わせて調整してください
-            # 例: check_origami(frame, step_num) や main 処理等
-            # -------------------------------------------------
-            try:
-                # demo.py の判定関数を実行 (例: check_step(frame, step_num))
-                is_correct = demo.check_origami(frame, step_num)
-            except AttributeError:
-                # 関数名が異なる場合のフォールバック（画面上での手動スキップ等）
-                st.warning("`demo.py` 内の判定関数の呼び出し名を確認してください。")
-                is_correct = False
-
-            # 判定結果に応じた表示とステップ更新
-            if is_correct:
-                st.success("⭕ 正しく折れています！")
-                if st.button("次のステップへ進む"):
-                    if st.session_state.step_index + 1 < total_steps:
-                        st.session_state.step_index += 1
-                    else:
-                        st.session_state.is_finished = True
-                    st.rerun()
-            else:
-                st.error("❌ まだ正しく折れていないようです。もう一度確認してください。")
+        if ctx.video_processor:
+            ctx.video_processor.step_num = step_num
 
     # ---------------------------------------------------------
-    # 右カラム: 手動コントロール（テスト・デバッグ用）
+    # 右カラム: 手動コントロール
     # ---------------------------------------------------------
     with col2:
-        st.write("### 進捗コントロール")
-        st.write(f"現在の内部インデックス: {st.session_state.step_index}")
+        st.write("### 手動コントロール")
 
         if st.button("強制的に次のステップへ"):
-            if st.session_state.step_index + 1 < total_steps:
-                st.session_state.step_index += 1
-            else:
-                st.session_state.is_finished = True
+            tutor.next_step()
             st.rerun()
 
         if st.button("前のステップに戻る"):
-            if st.session_state.step_index > 0:
-                st.session_state.step_index -= 1
-                st.session_state.is_finished = False
-            st.rerun()
+            if tutor.current_step > 0:
+                tutor.current_step -= 1
+                tutor.finished = False
+                st.rerun()
+                
