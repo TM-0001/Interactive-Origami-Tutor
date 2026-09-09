@@ -1,93 +1,52 @@
 import av
 import streamlit as st
-from streamlit_webrtc import (
-    webrtc_streamer,
-    VideoProcessorBase,
-)
 from streamlit_autorefresh import st_autorefresh
+from streamlit_webrtc import VideoProcessorBase, webrtc_streamer
+
+# 別ファイルのモジュールをインポート
+from demo1 import OrigamiChecker
+from tu import STEPS
 import const
 
-st.set_page_config(
-    layout="wide",
-    initial_sidebar_state="collapsed"
-)
-
-st.markdown(
-    const.HIDE_ST_STYLE,
-    unsafe_allow_html=True
-)
+st.set_page_config(layout="wide", initial_sidebar_state="collapsed")
+st.markdown(const.HIDE_ST_STYLE, unsafe_allow_html=True)
 
 if "step" not in st.session_state:
     st.session_state.step = 1
 
-st_autorefresh(
-    interval=500,
-    key="camera_check"
-)
+st_autorefresh(interval=500, key="camera_check")
 
-def image_processing(img):
-    """
-    テスト用。
 
-    カメラから5フレーム受け取ったらTrue。
-    """
-
-    return True
-
+# =========================================
+# VideoProcessor クラス
+# =========================================
 class VideoProcessor(VideoProcessorBase):
 
     def __init__(self):
         self.result = False
-        self.count = 0
+        self.checker = OrigamiChecker()
 
     def recv(self, frame):
-
-        # カメラ映像をOpenCV形式に変換
         img = frame.to_ndarray(format="bgr24")
 
-        # フレーム数をカウント
-        self.count += 1
-
-        # =========================
-        # 画像処理
-        # =========================
-
-        if self.count >= 5:
-            self.result = True
-
-        # =========================
-        # カメラ映像をそのまま表示
-        # =========================
-
-        return av.VideoFrame.from_ndarray(
-            img,
-            format="bgr24"
+        # session_stateのステップ番号を引数として渡す
+        current_step = st.session_state.get("step", 1)
+        self.result, processed_img = self.checker.process_frame(
+            img, step=current_step
         )
 
+        return av.VideoFrame.from_ndarray(processed_img, format="bgr24")
+# =========================================
+# UI レイアウト
+# =========================================
+cols = st.columns([2, 1], gap="medium")
 
-# =========================
-# メイン
-# =========================
-
-cols = st.columns(
-    [2, 1],
-    gap="medium"
-)
-
-
-# =========================
-# Camera
-# =========================
-
+# --- カメラエリア ---
 with cols[0]:
-
     st.subheader("Camera")
-
     ctx = webrtc_streamer(
         key="camera",
-
         video_processor_factory=VideoProcessor,
-
         media_stream_constraints={
             "video": {
                 "width": {"ideal": 1280},
@@ -98,87 +57,50 @@ with cols[0]:
         },
     )
 
-
-# =========================
-# 画像処理結果の確認
-# =========================
-
+# --- 判定連動 (True時にStep更新) ---
 if ctx.video_processor:
-
-    result = getattr(
-        ctx.video_processor,
-        "result",
-        False
-    )
+    result = getattr(ctx.video_processor, "result", False)
 
     if result:
-
-        # Stepを進める
-        if st.session_state.step < 3:
-
+        if st.session_state.step <= len(STEPS):
             st.session_state.step += 1
-
-            st.toast(
-                "素晴らしい！次のステップへ 🎉",
-                icon="🎉"
-            )
-
+            if st.session_state.step <= len(STEPS):
+                st.toast(
+                    f"Step {st.session_state.step - 1} クリア！次のステップへ 🎉",
+                    icon="🎉",
+                )
+            else:
+                st.toast("すべてのステップが完了しました！ 🎉", icon="🎉")
             st.rerun()
 
-
-# =========================
-# Step
-# =========================
-
+# --- 手順表示エリア (origami.pyと連動) ---
 with cols[1]:
-
     st.subheader("Step")
 
-    if st.session_state.step == 1:
+    current_idx = st.session_state.step - 1
 
+    if current_idx < len(STEPS):
+        step_info = STEPS[current_idx]
+        st.markdown(f"""
+        ### Step {step_info['step']} / {len(STEPS)}
+        
+        **{step_info['instruction']}**
+        
+        ---
+        💡 *正しく折ってカメラにかざすと自動で次の手順へ進みます。*
+        """)
+    else:
         st.markdown("""
-        ### 手順1
-
-        カメラを対象に向けてください。
-
-        **対象を検出すると次の手順へ進みます。**
+        ### Complete!
+        
+        🎉 **Your origami heart is complete!**  
+        折り紙のハートが完成しました！
         """)
 
-    elif st.session_state.step == 2:
-
-        st.markdown("""
-        ### 手順2
-
-        対象物を確認してください。
-
-        **条件を満たすと次の手順へ進みます。**
-        """)
-
-    elif st.session_state.step == 3:
-
-        st.markdown("""
-        ### 手順3
-
-        次の操作へ進みます。
-
-        🎉 **すべての手順が完了しました！**
-        """)
-
-
-# =========================
-# 下部
-# =========================
-
+# --- 下部ステータス ---
 st.divider()
 
-if st.session_state.step >= 3:
-
-    st.success(
-        "素晴らしい！すべての手順が完了しました 🎉"
-    )
-
+if st.session_state.step > len(STEPS):
+    st.success("Your origami heart is complete! 🎉")
 else:
-
-    st.write(
-        "カメラを対象物に向けてください。"
-    )
+    st.info(f"現在 Step {st.session_state.step} を実行中です。")
