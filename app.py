@@ -1,106 +1,100 @@
-import av
 import streamlit as st
-from streamlit_autorefresh import st_autorefresh
-from streamlit_webrtc import VideoProcessorBase, webrtc_streamer
+import cv2
+import numpy as np
 
-# 別ファイルのモジュールをインポート
-from demo1 import OrigamiChecker
+# 1. 既存ファイルをそのままインポート
 from tu import STEPS
-import const
+import demo
 
-st.set_page_config(layout="wide", initial_sidebar_state="collapsed")
-st.markdown(const.HIDE_ST_STYLE, unsafe_allow_html=True)
+# Streamlit の基本ページ設定
+st.set_page_config(page_title="折り紙チューター：ハート", layout="wide")
 
-if "step" not in st.session_state:
-    st.session_state.step = 1
+# ---------------------------------------------------------
+# セッション状態の初期化
+# ---------------------------------------------------------
+if "step_index" not in st.session_state:
+    st.session_state.step_index = 0  # 0からスタート
+if "is_finished" not in st.session_state:
+    st.session_state.is_finished = False
 
-st_autorefresh(interval=500, key="camera_check")
+# ---------------------------------------------------------
+# サイドバー／ヘッダー表示
+# ---------------------------------------------------------
+st.title("折り紙チューター：ハートの折り方")
 
+# 全ステップ数
+total_steps = len(STEPS)
 
-# =========================================
-# VideoProcessor クラス
-# =========================================
-class VideoProcessor(VideoProcessorBase):
+if st.session_state.is_finished:
+    st.balloons()
+    st.success("🎉 おめでとうございます！ハートの折り紙が完成しました！")
+    if st.button("最初からやり直す"):
+        st.session_state.step_index = 0
+        st.session_state.is_finished = False
+        st.rerun()
+else:
+    current_step_data = STEPS[st.session_state.step_index]
+    step_num = current_step_data["step"]
+    instruction = current_step_data["instruction"]
 
-    def __init__(self):
-        self.result = False
-        self.checker = OrigamiChecker()
+    st.subheader(f"Step {step_num} / {total_steps}")
+    st.info(f"**指示:** {instruction}")
 
-    def recv(self, frame):
-        img = frame.to_ndarray(format="bgr24")
+    col1, col2 = st.columns([1, 1])
 
-        # session_stateのステップ番号を引数として渡す
-        current_step = st.session_state.get("step", 1)
-        self.result, processed_img = self.checker.process_frame(
-            img, step=current_step
-        )
+    # ---------------------------------------------------------
+    # 左カラム: カメラ入力と判定処理
+    # ---------------------------------------------------------
+    with col1:
+        st.write("### リアルタイム判定")
+        img_file = st.camera_input("現在の折った状態を撮影してください")
 
-        return av.VideoFrame.from_ndarray(processed_img, format="bgr24")
-# =========================================
-# UI レイアウト
-# =========================================
-cols = st.columns([2, 1], gap="medium")
+        if img_file is not None:
+            # OpenCV 形式 (BGR) に変換
+            file_bytes = np.asarray(bytearray(img_file.read()), dtype=np.uint8)
+            frame = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
 
-# --- カメラエリア ---
-with cols[0]:
-    st.subheader("Camera")
-    ctx = webrtc_streamer(
-        key="camera",
-        video_processor_factory=VideoProcessor,
-        media_stream_constraints={
-            "video": {
-                "width": {"ideal": 1280},
-                "height": {"ideal": 720},
-                "aspectRatio": {"ideal": 16 / 9},
-            },
-            "audio": False,
-        },
-    )
+            # -------------------------------------------------
+            # demo.py の判定処理を呼び出し
+            # ※ demo.py 内の関数名・仕様に合わせて調整してください
+            # 例: check_origami(frame, step_num) や main 処理等
+            # -------------------------------------------------
+            try:
+                # demo.py の判定関数を実行 (例: check_step(frame, step_num))
+                is_correct = demo.check_origami(frame, step_num)
+            except AttributeError:
+                # 関数名が異なる場合のフォールバック（画面上での手動スキップ等）
+                st.warning("`demo.py` 内の判定関数の呼び出し名を確認してください。")
+                is_correct = False
 
-# --- 判定連動 (True時にStep更新) ---
-if ctx.video_processor:
-    result = getattr(ctx.video_processor, "result", False)
-
-    if result:
-        if st.session_state.step <= len(STEPS):
-            st.session_state.step += 1
-            if st.session_state.step <= len(STEPS):
-                st.toast(
-                    f"Step {st.session_state.step - 1} クリア！次のステップへ 🎉",
-                    icon="🎉",
-                )
+            # 判定結果に応じた表示とステップ更新
+            if is_correct:
+                st.success("⭕ 正しく折れています！")
+                if st.button("次のステップへ進む"):
+                    if st.session_state.step_index + 1 < total_steps:
+                        st.session_state.step_index += 1
+                    else:
+                        st.session_state.is_finished = True
+                    st.rerun()
             else:
-                st.toast("すべてのステップが完了しました！ 🎉", icon="🎉")
+                st.error("❌ まだ正しく折れていないようです。もう一度確認してください。")
+
+    # ---------------------------------------------------------
+    # 右カラム: 手動コントロール（テスト・デバッグ用）
+    # ---------------------------------------------------------
+    with col2:
+        st.write("### 進捗コントロール")
+        st.write(f"現在の内部インデックス: {st.session_state.step_index}")
+
+        if st.button("強制的に次のステップへ"):
+            if st.session_state.step_index + 1 < total_steps:
+                st.session_state.step_index += 1
+            else:
+                st.session_state.is_finished = True
             st.rerun()
 
-# --- 手順表示エリア (origami.pyと連動) ---
-with cols[1]:
-    st.subheader("Step")
-
-    current_idx = st.session_state.step - 1
-
-    if current_idx < len(STEPS):
-        step_info = STEPS[current_idx]
-        st.markdown(f"""
-        ### Step {step_info['step']} / {len(STEPS)}
-        
-        **{step_info['instruction']}**
-        
-        ---
-        💡 *正しく折ってカメラにかざすと自動で次の手順へ進みます。*
-        """)
-    else:
-        st.markdown("""
-        ### Complete!
-        
-        🎉 **Your origami heart is complete!**  
-        折り紙のハートが完成しました！
-        """)
-
-# --- 下部ステータス ---
-st.divider()
-
-if st.session_state.step > len(STEPS):
-    st.success("Your origami heart is complete! 🎉")
-else:
-    st.info(f"現在 Step {st.session_state.step} を実行中です。")
+        if st.button("前のステップに戻る"):
+            if st.session_state.step_index > 0:
+                st.session_state.step_index -= 1
+                st.session_state.is_finished = False
+            st.rerun()
