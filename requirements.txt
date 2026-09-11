@@ -4,5 +4,5 @@ mediapipe==0.10.14
 protobuf<5.0.0
 numpy<2.0.0
 av
-#streamlit-webrtc
-streamlit-webrtc==0.47.9
+streamlit-webrtc
+#streamlit-webrtc==0.47.9
